@@ -19,31 +19,42 @@ services:
 
   app:
     build: .
+    # O comando "user: node" ajuda a evitar problemas de permissão em desenvolvimento
+    user: node 
     networks:
       - web-public
       - db-private
     environment:
-      NODE_ENV: ${NODE_ENV}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      REDIS_HOST: redis
+      NODE_ENV: development
+      # ... suas vars de banco ...
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.app.rule=PathPrefix(`/`)"
       - "traefik.http.routers.app.entrypoints=web"
       - "traefik.http.services.app.loadbalancer.server.port=3000"
       - "traefik.docker.network=projetobarbearia_web-public"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s # Aumentei um pouco pq o Nest demora uns segundos pra compilar
+    volumes:
+      - .:/app
+      - /app/node_modules # Truque para não sobrescrever a pasta node_modules do container
     depends_on:
       - db
       - redis
 
   reverse-proxy:
-    image: traefik:v2.10
+    image: traefik:latest  # Última versão com suporte completo ao Docker Engine moderno
+    environment:
+      - DOCKER_API_VERSION=1.44  # Força o Traefik a usar API Docker mais recente
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=projetobarbearia_web-public"
       - "--entrypoints.web.address=:80"
       - "--log.level=DEBUG"
       - "--accesslog=true"
@@ -53,9 +64,16 @@ services:
       - "80:80"
       - "8080:8080"
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
     networks:
       - web-public
+      # REMOVIDO: - db-private (Traefik não precisa falar com o banco)
+    
+    # --- CORREÇÃO DA ORDEM ---
+    # O Traefik só liga DEPOIS que o App estiver saudável
+    depends_on:
+      app:
+        condition: service_healthy
 
 networks:
   web-public:
